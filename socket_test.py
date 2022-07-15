@@ -1,19 +1,14 @@
-import time
-import zmq
-import random
+#imports
+from binance.client import Client
+from binance import ThreadedWebsocketManager
+from datetime import datetime, timedelta
+import pandas as pd
+from time import sleep
 
-context = zmq.Context()
 
-#  Socket to talk to server
-print("Connecting to hello world server…")
-socket = context.socket(zmq.REQ)
-socket.connect("tcp://localhost:5555")
+#binance api config - when publishing to github replace the keys with env variables
+api_key = "30BgpWV9iVTXSVACnrVPeqtI7wDP18pMaTcGBjSl79DDJq04Kg9eMIBRrBoUkBUw"
+api_secret = "F9AAFQXqA44SGbd0zyqJhocaFae2zKgt1QnjNklwnkFAFpt1fximqKnV3BCyEP9I"
+client = Client(api_key, api_secret, url='https://fapi.binance.com')
 
-#  Do 10 requests, waiting each time for a response
-for request in range(10):
-    print(f"Sending request {request} …")
-    socket.send(b"Hello")
-
-    #  Get the reply.
-    message = socket.recv()
-    print(str(message))
+print(client.futures_account_balance())
