@@ -7,9 +7,10 @@ from time import sleep
 import zmq
 
 #binance api config - when publishing to github replace the keys with env variables
-api_key = "30BgpWV9iVTXSVACnrVPeqtI7wDP18pMaTcGBjSl79DDJq04Kg9eMIBRrBoUkBUw"
-api_secret = "F9AAFQXqA44SGbd0zyqJhocaFae2zKgt1QnjNklwnkFAFpt1fximqKnV3BCyEP9I"
-client = Client(api_key, api_secret)
+api_key = "46332cbdcb7721395928c33e952fd7e801f6ed26b5838a5cd02143465b9004c7"
+api_secret = "cfea28c13b62df5277e529618a95a98c7b21215670475b8a794e1efdd16478d4"
+client = Client(api_key, api_secret, testnet=True)
+client.API_URL = "https://testnet.binancefuture.com/fapi"
 
 #init ZMQ REQ sockets on port 5555 - this is client
 context = zmq.Context()
@@ -38,26 +39,34 @@ def mm(close_t1, p_high, p_low):
     RRR = 2
     HH = 2
     res = ""
-    if abs(close_t1 - p_high) > (HH * abs( abs(close_t1 - p_low))):
+    size = 0
+    if abs(close_t1 - p_high) > (HH * abs(close_t1 - p_low)):
         order_type = "long"
-        size = "HTS"
         sl = close_t1 - (abs(close_t1 - p_high)/RRR)
         tp = p_high
+        size = round(pos_size(tp, close_t1), 2)
         res = str(datetime.now())+ "|" + str(order_type) + "|" + str(size) + "|" + str(sl) + "|" + str(tp)
     elif (HH * abs(close_t1 - p_high) < abs(close_t1 - p_low)):
         order_type = "short"
-        size = "HTS"
         sl = close_t1 + (abs(close_t1 - p_low)/RRR)
         tp = p_low
+        size = round(pos_size(tp, close_t1), 2)
         res = str(datetime.now())+ "|" + str(order_type) + "|" + str(size) + "|" + str(sl) + "|" + str(tp)
-    return res
+    if size != 0:
+        return res
 
 #position size
-def pos_size():
-    pass
+def pos_size(tp, close_t1):
+    bal = float(client.futures_account_balance()[1]["balance"])
+    reward = bal * 0.1
+    pos_size = (reward * close_t1) / (abs(close_t1 - tp))
+    if pos_size >= (20 * bal):
+        return 0
+    else:
+        return pos_size
 
-#focusing only on BTCUSD
-symbol = 'BTCUSD'
+#focusing only on BTCUSDT
+symbol = 'BTCUSDT'
 
 #init and start the WebSocket
 bsm = ThreadedWebsocketManager()
@@ -69,7 +78,7 @@ test_lst = []
 while True:
 
     #wait until xx:00 or xx:30
-    while (int(datetime.now().strftime("%M")) == 30) and ((int(datetime.now().strftime("%M")) != 0)):
+    while (int(datetime.now().strftime("%M")) != 30) and ((int(datetime.now().strftime("%M")) != 0)):
         #do nothing
         print(datetime.now())
         print("cekam na konec pulhodiny")
@@ -85,7 +94,7 @@ while True:
     print(timestamp)
 
     #request historical candle (or klines) data
-    bars = client.get_historical_klines("BTCUSDT", '30m', timestamp, limit=500)
+    bars = client.futures_historical_klines(symbol, '30m', timestamp, limit=500)
 
     #delete unnecessary data
     for line in bars:
@@ -132,7 +141,7 @@ while True:
     close_t1 = float(df.loc[len(df) - 1, "Close"])
 
     order = mm(close_t1, pred_high, pred_low)
-    if order != "":
+    if (order != "") and (order != None):
         test_lst.append(order)
 
     print(test_lst)
