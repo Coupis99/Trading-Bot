@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 from time import sleep
 import zmq
+import json
+import requests
 
 #binance api config - when publishing to github replace the keys with env variables
 api_key = "46332cbdcb7721395928c33e952fd7e801f6ed26b5838a5cd02143465b9004c7"
@@ -42,28 +44,30 @@ def mm(close_t1, p_high, p_low):
     size = 0
     if abs(close_t1 - p_high) > (HH * abs(close_t1 - p_low)):
         order_type = "long"
-        sl = close_t1 - (abs(close_t1 - p_high)/RRR)
-        tp = p_high
+        sl = p_low
+        tp = close_t1 + (2 * abs(close_t1 - p_low))
         size = round(pos_size(tp, close_t1), 2)
         res = str(datetime.now())+ "|" + str(order_type) + "|" + str(size) + "|" + str(sl) + "|" + str(tp)
     elif (HH * abs(close_t1 - p_high) < abs(close_t1 - p_low)):
         order_type = "short"
-        sl = close_t1 + (abs(close_t1 - p_low)/RRR)
-        tp = p_low
+        sl = p_high
+        tp = close_t1 - (2 * abs(close_t1 - p_high))
         size = round(pos_size(tp, close_t1), 2)
-        res = str(datetime.now())+ "|" + str(order_type) + "|" + str(size) + "|" + str(sl) + "|" + str(tp)
-    if size != 0:
-        return res
+        res = str(datetime.now()) + "|" + str(order_type) + "|" + str(size) + "|" + str(sl) + "|" + str(tp)
+    else:
+        print("není to ani jedno")
+    return res
 
 #position size
 def pos_size(tp, close_t1):
     bal = float(client.futures_account_balance()[1]["balance"])
     reward = bal * 0.1
     pos_size = (reward * close_t1) / (abs(close_t1 - tp))
-    if pos_size >= (20 * bal):
-        return 0
-    else:
-        return pos_size
+    key = f"https://testnet.binancefuture.com/fapi/v1/ticker/24hr?symbol={symbol}"
+    data = requests.get(key)  
+    data = data.json()
+    cur_price = float(data["lastPrice"])
+    return float(pos_size) / float(cur_price)
 
 #focusing only on BTCUSDT
 symbol = 'BTCUSDT'
@@ -107,7 +111,7 @@ while True:
         df.loc[i, "DateTime"] = datetime.fromtimestamp(df.loc[i, "DateTime"]/1000)
         
     print(df)
-
+    
     #convert bars to string
     res_string = conv_to_string(bars)
 
@@ -141,7 +145,8 @@ while True:
     close_t1 = float(df.loc[len(df) - 1, "Close"])
 
     order = mm(close_t1, pred_high, pred_low)
-    if (order != "") and (order != None):
+    print(order)
+    if (order != ""):
         test_lst.append(order)
 
     print(test_lst)
