@@ -51,41 +51,47 @@ def mm(close_t1, p_high, p_low):
     HH = 2
     res = {}
     size = 0
-    if (abs(close_t1 - p_high) > (HH * abs(close_t1 - p_low))) and (abs(p_high - p_low) > 80):
+    cur_price = get_cur_last_price(symbol)
+    if (abs(cur_price - p_high) > (HH * abs(cur_price - p_low))) and (abs(cur_price - p_low) > 70):
         order_type = "BUY"
-        sl = p_low
-        tp = close_t1 + (2 * abs(close_t1 - p_low))
-        size = round(pos_size(tp, close_t1), 2)
+        sl = p_low - 10
+        tp = cur_price + (2 * abs(cur_price - p_low))
+        size = pos_size(tp, close_t1)
         res["DateTime"] = str(datetime.now())
         res["OrderType"] = order_type
         res["StopLoss"] = round(sl, 2)
         res["TakeProfit"] = round(tp, 2)
-        res["PositionSize"] = size
-    elif ((HH * abs(close_t1 - p_high) < abs(close_t1 - p_low))) and (abs(p_high - p_low) > 80):
+        res["PositionSize"] = round(float(size[0]), 2)
+        res["AdjustedSize"] = str(size[1])
+    elif ((HH * abs(cur_price - p_high) < abs(cur_price - p_low))) and (abs(p_high - cur_price) > 70):
         order_type = "SELL"
-        sl = p_high
-        tp = close_t1 - (2 * abs(close_t1 - p_high))
-        size = round(pos_size(tp, close_t1), 2)
+        sl = p_high + 10
+        tp = cur_price - (2 * abs(cur_price - p_high))
+        size = pos_size(tp, close_t1)
         res["DateTime"] = str(datetime.now())
         res["OrderType"] = order_type
         res["StopLoss"] = round(sl, 2)
         res["TakeProfit"] = round(tp, 2)
-        res["PositionSize"] = size
+        res["PositionSize"] = round(float(size[0]), 2)
+        res["AdjustedSize"] = str(size[1])
     else:
         print("není to ani jedno")
     return res
 
 #position size
 def pos_size(tp, close_t1):
+    adjusted = False
     bal = float(client.futures_account_balance()[1]["balance"])
     reward = bal * 0.1
-    pos_size = (reward * close_t1) / (abs(close_t1 - tp))
     cur_price = get_cur_last_price(symbol)
-    if pos_size > 20 * bal:
+    pos_size = (reward * cur_price) / (abs(cur_price - tp))
+    if pos_size > 19 * bal:
         pos_size = 18 * bal
-    return float(pos_size) / float(cur_price)
+        adjusted = True
+    return [float(float(pos_size) / float(cur_price)), adjusted]
 
 def place_order(type, sl, tp, size):
+    er = None
     if type == "BUY":
         try:
             buy_market = client.futures_create_order(
@@ -111,9 +117,25 @@ def place_order(type, sl, tp, size):
         except BinanceAPIException as e:
             #error handling goes here
             print(e)
+            if len(client.futures_get_open_orders()) > 0:
+                close_market = client.futures_create_order(
+                    symbol=symbol,
+                    side='SELL',
+                    type='MARKET',
+                    quantity=size)
+                print("ukoncuji trade")
+            er = e
         except BinanceOrderException as e:
             #error handling goes here
             print(e)
+            if len(client.futures_get_open_orders()) > 0:
+                close_market = client.futures_create_order(
+                    symbol=symbol,
+                    side='SELL',
+                    type='MARKET',
+                    quantity=size)
+                print("ukoncuji trade")
+            er = e
     else:
         try:
             sell_market = client.futures_create_order(
@@ -139,12 +161,28 @@ def place_order(type, sl, tp, size):
         except BinanceAPIException as e:
             #error handling goes here
             print(e)
+            if len(client.futures_get_open_orders()) > 0:
+                close_market = client.futures_create_order(
+                    symbol=symbol,
+                    side='BUY',
+                    type='MARKET',
+                    quantity=size)
+                print("ukoncuji trade")
+            er = e
         except BinanceOrderException as e:
             #error handling goes here
             print(e)
-
+            if len(client.futures_get_open_orders()) > 0:
+                close_market = client.futures_create_order(
+                    symbol=symbol,
+                    side='BUY',
+                    type='MARKET',
+                    quantity=size)
+                print("ukoncuji trade")
+            er = e
+    return er
 #focusing only on BTCUSDT
-symbol = 'BTCUSDT'
+symbol = 'ETHUSDT'
 
 #init and start the WebSocket
 bsm = ThreadedWebsocketManager()
@@ -223,7 +261,14 @@ while True:
     #write to a file
     if (order != {}):
         print(order)
-        place_order(order["OrderType"], order["StopLoss"], order["TakeProfit"], order["PositionSize"])
+        order["BalanceBeforeTrade"] = float(client.futures_account_balance()[1]["balance"])
+        cur_price = get_cur_last_price(symbol)
+        order["BalanceAfterSucTrade"] = order["BalanceBeforeTrade"] + (abs(order["TakeProfit"] - cur_price) * order["PositionSize"])
+        order["BalanceGrowthPct"] = str(((order["BalanceAfterSucTrade"]/order["BalanceBeforeTrade"]) - 1) * 100) + "%"
+        order["BalanceAfterUnsucTrade"] = order["BalanceBeforeTrade"] - (abs(order["StopLoss"] - cur_price) * order["PositionSize"])
+        order["BalanceDropPct"] = str((1 - (order["BalanceAfterUnsucTrade"] / order["BalanceBeforeTrade"])) * 100) + "%"
+        e = place_order(order["OrderType"], order["StopLoss"], order["TakeProfit"], order["PositionSize"])
+        order["Error"] = str(e)
         print("zapisuji do souboru")
         js = json.dumps(order, indent=4)
         f = open("trade_log.txt", "a")
