@@ -52,7 +52,7 @@ def mm(close_t1, p_high, p_low):
     res = {}
     size = 0
     cur_price = get_cur_last_price(symbol)
-    if (abs(cur_price - p_high) > (HH * abs(cur_price - p_low))) and (abs(cur_price - p_low) > 70):
+    if (abs(cur_price - p_high) > (HH * abs(cur_price - p_low))) and (cur_price - p_low > 70):
         order_type = "BUY"
         sl = p_low - 10
         tp = cur_price + (2 * abs(cur_price - p_low))
@@ -63,17 +63,24 @@ def mm(close_t1, p_high, p_low):
         res["TakeProfit"] = round(tp, 2)
         res["PositionSize"] = round(float(size[0]), 2)
         res["AdjustedSize"] = str(size[1])
-    elif ((HH * abs(cur_price - p_high) < abs(cur_price - p_low))) and (abs(p_high - cur_price) > 70):
+        res["CurrentPrice"] = str(cur_price)
+        res["PredictedHigh"] = str(p_high)
+        res["PredictedLow"] = str(p_low)
+    elif ((HH * abs(cur_price - p_high) < abs(cur_price - p_low))) and (p_high - cur_price > 70):
         order_type = "SELL"
         sl = p_high + 10
         tp = cur_price - (2 * abs(cur_price - p_high))
         size = pos_size(tp, close_t1)
         res["DateTime"] = str(datetime.now())
+        res["Symbol"] = symbol
         res["OrderType"] = order_type
         res["StopLoss"] = round(sl, 2)
         res["TakeProfit"] = round(tp, 2)
         res["PositionSize"] = round(float(size[0]), 2)
         res["AdjustedSize"] = str(size[1])
+        res["CurrentPrice"] = str(cur_price)
+        res["PredictedHigh"] = str(p_high)
+        res["PredictedLow"] = str(p_low)
     else:
         print("není to ani jedno")
     return res
@@ -90,99 +97,112 @@ def pos_size(tp, close_t1):
         adjusted = True
     return [float(float(pos_size) / float(cur_price)), adjusted]
 
-def place_order(type, sl, tp, size):
+def place_order(type, sl, tp, size, p):
+    force_end = ""
     er = None
     if type == "BUY":
         try:
-            buy_market = client.futures_create_order(
+            buy_limit = client.futures_create_order(
                 symbol=symbol,
                 side='BUY',
-                type='MARKET',
-                quantity=size)
+                type='LIMIT',
+                quantity=size, 
+                timeInForce='GTC',
+                price = p)
             tp_sell_market = client.futures_create_order(
                 symbol = symbol,
                 side = "SELL",
-                type='TAKE_PROFIT_MARKET',
-                stopPrice=tp, 
-                closePosition=True, 
-                timeInForce='GTE_GTC')
+                type='LIMIT',
+                quantity=size,
+                price=tp, 
+                timeInForce='GTC')
             sl_sell_market = client.futures_create_order(
                 symbol = symbol,
                 side = "SELL",
-                type='STOP_MARKET',
-                stopPrice=sl, 
-                closePosition=True, 
-                timeInForce='GTE_GTC')
+                type='LIMIT',
+                quantity=size,
+                price=sl, 
+                timeInForce='GTC')
             print("order filled")
         except BinanceAPIException as e:
             #error handling goes here
             print(e)
+            sleep(5)
             if len(client.futures_get_open_orders()) > 0:
                 close_market = client.futures_create_order(
                     symbol=symbol,
                     side='SELL',
                     type='MARKET',
                     quantity=size)
+                force_end = "Force end!"
                 print("ukoncuji trade")
             er = e
         except BinanceOrderException as e:
             #error handling goes here
             print(e)
+            sleep(5)
             if len(client.futures_get_open_orders()) > 0:
                 close_market = client.futures_create_order(
                     symbol=symbol,
                     side='SELL',
                     type='MARKET',
                     quantity=size)
+                force_end = "Force end!"
                 print("ukoncuji trade")
             er = e
     else:
         try:
-            sell_market = client.futures_create_order(
+            sell_limit = client.futures_create_order(
                 symbol=symbol,
                 side='SELL',
-                type='MARKET',
-                quantity=size)
+                type='LIMIT',
+                quantity=size,
+                timeInForce='GTC',
+                price = p)
             tp_buy_market = client.futures_create_order(
                 symbol = symbol,
                 side = "BUY",
-                type='TAKE_PROFIT_MARKET',
-                stopPrice=tp, 
-                closePosition=True, 
-                timeInForce='GTE_GTC')
+                quantity=size,
+                type='LIMIT',
+                price=tp, 
+                timeInForce='GTC')
             sl_buy_market = client.futures_create_order(
                 symbol = symbol,
                 side = "BUY",
-                type='STOP_MARKET',
-                stopPrice=sl, 
-                closePosition=True, 
-                timeInForce='GTE_GTC')
+                type='LIMIT',
+                quantity=size,
+                price=sl, 
+                timeInForce='GTC')
             print("order filled")
         except BinanceAPIException as e:
             #error handling goes here
             print(e)
+            sleep(5)
             if len(client.futures_get_open_orders()) > 0:
                 close_market = client.futures_create_order(
                     symbol=symbol,
                     side='BUY',
                     type='MARKET',
                     quantity=size)
+                force_end = "Force end!"
                 print("ukoncuji trade")
             er = e
         except BinanceOrderException as e:
             #error handling goes here
             print(e)
+            sleep(5)
             if len(client.futures_get_open_orders()) > 0:
                 close_market = client.futures_create_order(
                     symbol=symbol,
                     side='BUY',
                     type='MARKET',
                     quantity=size)
+                force_end = "Force end!"
                 print("ukoncuji trade")
             er = e
-    return er
+    return str(er) + " - " + force_end
 #focusing only on BTCUSDT
-symbol = 'ETHUSDT'
+symbol = 'BTCUSDT'
 
 #init and start the WebSocket
 bsm = ThreadedWebsocketManager()
@@ -201,7 +221,7 @@ while True:
     print("vsechny pozice ukonceny")
 
     #wait until xx:00 or xx:30
-    while (int(datetime.now().strftime("%M")) != 30) and ((int(datetime.now().strftime("%M")) != 0)):
+    while (int(datetime.now().strftime("%M")) == 30) and ((int(datetime.now().strftime("%M")) != 0)):
         #do nothing
         print(datetime.now())
         print("cekam na konec pulhodiny")
@@ -267,7 +287,7 @@ while True:
         order["BalanceGrowthPct"] = str(((order["BalanceAfterSucTrade"]/order["BalanceBeforeTrade"]) - 1) * 100) + "%"
         order["BalanceAfterUnsucTrade"] = order["BalanceBeforeTrade"] - (abs(order["StopLoss"] - cur_price) * order["PositionSize"])
         order["BalanceDropPct"] = str((1 - (order["BalanceAfterUnsucTrade"] / order["BalanceBeforeTrade"])) * 100) + "%"
-        e = place_order(order["OrderType"], order["StopLoss"], order["TakeProfit"], order["PositionSize"])
+        e = place_order(order["OrderType"], order["StopLoss"], order["TakeProfit"], order["PositionSize"], order["CurrentPrice"])
         order["Error"] = str(e)
         print("zapisuji do souboru")
         js = json.dumps(order, indent=4)
