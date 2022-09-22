@@ -1,4 +1,5 @@
 #imports
+from sqlite3 import Timestamp
 from binance.client import Client
 from binance import ThreadedWebsocketManager
 from binance.exceptions import BinanceAPIException, BinanceOrderException
@@ -21,29 +22,47 @@ buy_limit = client.futures_create_order(
         side='BUY',
         type='LIMIT',
         timeInForce='GTC',
-        quantity=0.1,
-        price=22400,
+        quantity=0.001,
+        price=19397,
         positionSide="BOTH",
         reduceOnly = False)
 
-sl_sell_market = client.futures_create_order(
-                symbol = symbol,
-                side = "SELL",
-                type = "STOP_MARKET",
-                quantity = 0.1,
-                stopPrice=22300, 
-                reduceOnly=True, 
-                positionSide="BOTH",
-                timeInForce='GTE_GTC')
-tp_sell_market = client.futures_create_order(
-                symbol = symbol,
-                side = "SELL",
-                type = "TAKE_PROFIT_MARKET",
-                stopPrice=22500, 
-                reduceOnly=True, 
-                quantity = 0.1,
-                positionSide="BOTH",
-                timeInForce='GTE_GTC')
-print("order filled")
 
 print(buy_limit)
+print("\n")
+
+while True:
+        status = client.futures_get_order(symbol = symbol, orderId = buy_limit["orderId"])["status"]
+        if status == "FILLED":
+                break
+        print("jeste neni filled")
+        sleep(5)
+print("filled")
+print("\n")
+print(buy_limit)
+
+sl_sell_limit = client.futures_create_order(
+                symbol = symbol,
+                side = "SELL",
+                type = "STOP",
+                quantity = 0.1,
+                stopPrice=18000,
+                price = 18000, 
+                reduceOnly=True, 
+                positionSide="BOTH",
+                timeInForce='GTE_GTC')
+
+tp_sell_limit = client.futures_create_order(
+                symbol = symbol,
+                side = "SELL",
+                type = "TAKE_PROFIT",
+                stopPrice=22500,
+                price = 22500, 
+                reduceOnly=True, 
+                quantity = 0.1,
+                positionSide="BOTH",
+                timeInForce='GTE_GTC')
+
+print("za 10 ukoncuji trade")
+sleep(10)
+#client.futures_cancel_order(symbol = symbol, orderId = int(buy_limit["orderId"]), timestamp = True, origClientOrderId = str(buy_limit["clientOrderId"]))

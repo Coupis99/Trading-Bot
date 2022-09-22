@@ -28,6 +28,14 @@ def get_cur_last_price(smb):
     res = float(data["lastPrice"])
     return res
 
+#get average true range of last known row
+def get_atr(data, period):
+    cum_sum = 0
+    for idx in range(len(data) - period, len(data)):
+        cum_sum += max(abs(float(data.iloc[idx]["High"]) - float(data.iloc[idx]["Low"])), abs(float(data.iloc[idx]["High"]) - float(data.iloc[idx-1]["Close"])),
+                       abs(float(data.iloc[idx-1]["Close"]) - float(data.iloc[idx]["Low"])))
+    return cum_sum / period
+
 #converting data into string separated with | and ||
 def conv_to_string(data):
     res_string = ""
@@ -46,18 +54,19 @@ def conv_to_string(data):
     return res_string
 
 #money management
-def mm(close_t1, p_high, p_low):
+def mm(close_t1, p_high, p_low, at):
     RRR = 2
     HH = 2
     res = {}
     size = 0
     cur_price = get_cur_last_price(symbol)
-    if (abs(cur_price - p_high) > (HH * abs(cur_price - p_low))) and (cur_price - p_low > 70):
+    if (abs(cur_price - p_high) > (HH * abs(cur_price - p_low))) and (cur_price - p_low > (at / 3)):
         order_type = "BUY"
-        sl = p_low - 10
-        tp = cur_price + (2 * abs(cur_price - p_low))
+        sl = p_low - (abs(cur_price - p_low) * 0.01)
+        tp = cur_price + (RRR * abs(cur_price - p_low))
         size = pos_size(tp, close_t1)
         res["DateTime"] = str(datetime.now())
+        res["Symbol"] = symbol
         res["OrderType"] = order_type
         res["StopLoss"] = round(sl, 2)
         res["TakeProfit"] = round(tp, 2)
@@ -66,10 +75,10 @@ def mm(close_t1, p_high, p_low):
         res["CurrentPrice"] = str(cur_price)
         res["PredictedHigh"] = str(p_high)
         res["PredictedLow"] = str(p_low)
-    elif ((HH * abs(cur_price - p_high) < abs(cur_price - p_low))) and (p_high - cur_price > 70):
+    elif ((HH * abs(cur_price - p_high) < abs(cur_price - p_low))) and (p_high - cur_price > (at / 3)):
         order_type = "SELL"
-        sl = p_high + 10
-        tp = cur_price - (2 * abs(cur_price - p_high))
+        sl = p_high + (abs(cur_price - p_high) * 0.01)
+        tp = cur_price - (RRR * abs(cur_price - p_high))
         size = pos_size(tp, close_t1)
         res["DateTime"] = str(datetime.now())
         res["Symbol"] = symbol
@@ -82,7 +91,7 @@ def mm(close_t1, p_high, p_low):
         res["PredictedHigh"] = str(p_high)
         res["PredictedLow"] = str(p_low)
     else:
-        print("není to ani jedno")
+        print("no possible trade found")
     return res
 
 #position size
@@ -92,8 +101,8 @@ def pos_size(tp, close_t1):
     reward = bal * 0.1
     cur_price = get_cur_last_price(symbol)
     pos_size = (reward * cur_price) / (abs(cur_price - tp))
-    if pos_size > 19 * bal:
-        pos_size = 18 * bal
+    if pos_size > 24 * bal:
+        pos_size = 23 * bal
         adjusted = True
     return [float(float(pos_size) / float(cur_price)), adjusted]
 
@@ -101,6 +110,7 @@ def place_order(type, sl, tp, size, p):
     force_end = ""
     er = None
     if type == "BUY":
+        order_id = 0
         try:
             buy_limit = client.futures_create_order(
                 symbol=symbol,
@@ -108,101 +118,152 @@ def place_order(type, sl, tp, size, p):
                 type='LIMIT',
                 quantity=size, 
                 timeInForce='GTC',
-                price = p)
-            tp_sell_market = client.futures_create_order(
-                symbol = symbol,
-                side = "SELL",
-                type='LIMIT',
-                quantity=size,
-                price=tp, 
-                timeInForce='GTC')
-            sl_sell_market = client.futures_create_order(
-                symbol = symbol,
-                side = "SELL",
-                type='LIMIT',
-                quantity=size,
-                price=sl, 
-                timeInForce='GTC')
-            print("order filled")
+                price = p,
+                positionSide="BOTH",
+                reduceOnly = False)
+            order_id = buy_limit["orderId"]
+            print("order placed")
         except BinanceAPIException as e:
             #error handling goes here
             print(e)
-            sleep(5)
-            if len(client.futures_get_open_orders()) > 0:
-                close_market = client.futures_create_order(
-                    symbol=symbol,
-                    side='SELL',
-                    type='MARKET',
-                    quantity=size)
-                force_end = "Force end!"
-                print("ukoncuji trade")
+            sleep(3)
+            client.futures_cancel_all_open_orders(symbol = symbol) # if the order went through
+            print("canceling all open orders")
             er = e
         except BinanceOrderException as e:
             #error handling goes here
             print(e)
-            sleep(5)
-            if len(client.futures_get_open_orders()) > 0:
-                close_market = client.futures_create_order(
-                    symbol=symbol,
-                    side='SELL',
-                    type='MARKET',
-                    quantity=size)
-                force_end = "Force end!"
-                print("ukoncuji trade")
+            sleep(3)
+            client.futures_cancel_all_open_orders(symbol = symbol) # if the order went through
+            print("canceling all open orders")
             er = e
+            
+        wait_minute = 0
+        if int(datetime.now().strftime("%M")) < 30:
+            wait_minute = 25
+        else:
+            wait_minute = 55
+        while True:
+            status = client.futures_get_order(symbol = symbol, orderId = order_id)["status"]
+
+            if status == "FILLED":
+                print(str(datetime.now())+ " - order filled")
+                try:
+                    sl_sell_market = client.futures_create_order(
+                                    symbol = symbol,
+                                    side = "SELL",
+                                    type = "STOP",
+                                    quantity = size,
+                                    stopPrice=sl, 
+                                    price=sl,
+                                    reduceOnly=True, 
+                                    positionSide="BOTH",
+                                    timeInForce='GTE_GTC')
+                    tp_sell_market = client.futures_create_order(
+                                    symbol = symbol,
+                                    side = "SELL",
+                                    type = "TAKE_PROFIT",
+                                    stopPrice=tp, 
+                                    price=tp,
+                                    reduceOnly=True, 
+                                    quantity = size,
+                                    positionSide="BOTH",
+                                    timeInForce='GTE_GTC')
+                except:
+                    er = "failed to append stoploss or takeprofit to order"
+                    print(er) 
+                    print("\n closing the filled order")  
+                    close_market = client.futures_create_order(symbol=symbol,
+                                                                side = "SELL",
+                                                                type = "Market",
+                                                                quantity = size)   
+                break
+            elif int(datetime.now().strftime("%M")) == wait_minute:
+                print(str(datetime.now())+ " - order did not filled - canceling the open order")
+                client.futures_cancel_all_open_orders(symbol = symbol)
+                return "not filled"
+            else:
+                print(str(datetime.now()) + " - " +"waiting for filling the order")
+                sleep(10)
     else:
+        order_id = 0
         try:
             sell_limit = client.futures_create_order(
                 symbol=symbol,
                 side='SELL',
                 type='LIMIT',
-                quantity=size,
+                quantity=size, 
                 timeInForce='GTC',
-                price = p)
-            tp_buy_market = client.futures_create_order(
-                symbol = symbol,
-                side = "BUY",
-                quantity=size,
-                type='LIMIT',
-                price=tp, 
-                timeInForce='GTC')
-            sl_buy_market = client.futures_create_order(
-                symbol = symbol,
-                side = "BUY",
-                type='LIMIT',
-                quantity=size,
-                price=sl, 
-                timeInForce='GTC')
-            print("order filled")
+                price = p,
+                positionSide="BOTH",
+                reduceOnly = False)
+            order_id = sell_limit["orderId"]
+            print("order placed")
         except BinanceAPIException as e:
             #error handling goes here
             print(e)
-            sleep(5)
-            if len(client.futures_get_open_orders()) > 0:
-                close_market = client.futures_create_order(
-                    symbol=symbol,
-                    side='BUY',
-                    type='MARKET',
-                    quantity=size)
-                force_end = "Force end!"
-                print("ukoncuji trade")
+            sleep(3)
+            client.futures_cancel_all_open_orders(symbol = symbol) # if the order went through
+            print("canceling all open orders")
             er = e
         except BinanceOrderException as e:
             #error handling goes here
             print(e)
-            sleep(5)
-            if len(client.futures_get_open_orders()) > 0:
-                close_market = client.futures_create_order(
-                    symbol=symbol,
-                    side='BUY',
-                    type='MARKET',
-                    quantity=size)
-                force_end = "Force end!"
-                print("ukoncuji trade")
+            sleep(3)
+            client.futures_cancel_all_open_orders(symbol = symbol) # if the order went through
+            print("canceling all open orders")
             er = e
+            
+        wait_minute = 0
+        if int(datetime.now().strftime("%M")) < 30:
+            wait_minute = 25
+        else:
+            wait_minute = 55
+        while True:
+            status = client.futures_get_order(symbol = symbol, orderId = order_id)["status"]
+
+            if status == "FILLED":
+                print(str(datetime.now())+ " - order filled")
+                try:
+                    sl_sell_market = client.futures_create_order(
+                                    symbol = symbol,
+                                    side = "BUY",
+                                    type = "STOP",
+                                    quantity = size,
+                                    stopPrice=sl,
+                                    price = sl, 
+                                    reduceOnly=True, 
+                                    positionSide="BOTH",
+                                    timeInForce='GTE_GTC')
+                    tp_sell_market = client.futures_create_order(
+                                    symbol = symbol,
+                                    side = "BUY",
+                                    type = "TAKE_PROFIT",
+                                    stopPrice=tp,
+                                    price=tp, 
+                                    reduceOnly=True, 
+                                    quantity = size,
+                                    positionSide="BOTH",
+                                    timeInForce='GTE_GTC')
+                except:
+                    er = "failed to append stoploss or takeprofit to order"
+                    print(er) 
+                    print("\n closing the filled order")  
+                    close_market = client.futures_create_order(symbol=symbol,
+                                                                side = "BUY",
+                                                                type = "Market",
+                                                                quantity = size)   
+                break
+            elif int(datetime.now().strftime("%M")) == wait_minute:
+                print(str(datetime.now())+ " - order did not filled - canceling the open order")
+                client.futures_cancel_all_open_orders(symbol = symbol)
+                return "not filled"
+            else:
+                print(str(datetime.now()) + " - " +"waiting for filling the order")
+                sleep(10)
     return str(er) + " - " + force_end
 #focusing only on BTCUSDT
-symbol = 'BTCUSDT'
+symbol = 'LTCUSDT'
 
 #init and start the WebSocket
 bsm = ThreadedWebsocketManager()
@@ -215,19 +276,19 @@ while True:
     while len(client.futures_get_open_orders()) > 0:
         #do nothing
         print(datetime.now())
-        print("cekam na ukonceni vsech pozic")
+        print("waiting for closing all open orders..")
         sleep(29)
 
-    print("vsechny pozice ukonceny")
+    print("all open orders closed")
 
     #wait until xx:00 or xx:30
-    while (int(datetime.now().strftime("%M")) == 30) and ((int(datetime.now().strftime("%M")) != 0)):
+    while (int(datetime.now().strftime("%M")) != 30) and ((int(datetime.now().strftime("%M")) != 0)):
         #do nothing
         print(datetime.now())
-        print("cekam na konec pulhodiny")
+        print("waiting for the end of half an hour")
         sleep(29)
 
-    print("muzu zacit")
+    print("Let the fun begin")
 
     #finding datetime 1000 half hours back from now
     dt = datetime.now() - timedelta(hours = 500.5) 
@@ -247,6 +308,9 @@ while True:
         df.loc[i, "DateTime"] = datetime.fromtimestamp(df.loc[i, "DateTime"]/1000)
         
     print(df)
+
+    atr = get_atr(df, 14)
+    print("ATR: " + str(atr))
     
     #convert bars to string
     res_string = conv_to_string(bars)
@@ -276,7 +340,7 @@ while True:
     pred_close = float(pred_val_lst[2])
     close_t1 = float(df.loc[len(df) - 1, "Close"])
 
-    order = mm(close_t1, pred_high, pred_low)
+    order = mm(close_t1, pred_high, pred_low, atr)
 
     #write to a file
     if (order != {}):
@@ -288,13 +352,16 @@ while True:
         order["BalanceAfterUnsucTrade"] = order["BalanceBeforeTrade"] - (abs(order["StopLoss"] - cur_price) * order["PositionSize"])
         order["BalanceDropPct"] = str((1 - (order["BalanceAfterUnsucTrade"] / order["BalanceBeforeTrade"])) * 100) + "%"
         e = place_order(order["OrderType"], order["StopLoss"], order["TakeProfit"], order["PositionSize"], order["CurrentPrice"])
-        order["Error"] = str(e)
-        print("zapisuji do souboru")
-        js = json.dumps(order, indent=4)
-        f = open("trade_log.txt", "a")
-        f.write("\n")
-        f.write(js)
-        f.close()
+        if e == "not filled":
+            print("order not filled - not writing to a file")
+        else:
+            order["Error"] = str(e)
+            print("writing to a file")
+            js = json.dumps(order, indent=4)
+            f = open("trade_log.txt", "a")
+            f.write("\n")
+            f.write(js)
+            f.close()
     
     print("sleeping")
     sleep(60)
